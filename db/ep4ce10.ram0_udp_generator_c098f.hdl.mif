@@ -1,0 +1,16 @@
+-- begin_signature
+-- udp_generator(ip_adr
+-- 32'b11000000101010000000111100001110)
+-- end_signature
+WIDTH=8;
+DEPTH=4;
+
+ADDRESS_RADIX=UNS;
+DATA_RADIX=BIN;
+
+CONTENT BEGIN
+	3 :	00000000;
+	2 :	01000101;
+	1 :	00000000;
+	0 :	00001000;
+END;
