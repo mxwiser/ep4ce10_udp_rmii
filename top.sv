@@ -50,6 +50,7 @@ logic rx_head_rdy;
 
 logic [31:0] tx_ip;
 logic [15:0] tx_dst_port;
+logic [15:0] tx_src_port;
 logic tx_req;
 logic [7:0] tx_data;
 logic tx_data_av;
@@ -87,7 +88,7 @@ udp #(
     .rx_data_o(rx_data),
 
     .tx_ip_i(tx_ip),
-    .tx_src_port_i(16'd11451),
+    .tx_src_port_i(tx_src_port),
     .tx_dst_port_i(tx_dst_port),
     .tx_req_i(tx_req),
     .tx_data_i(tx_data),
@@ -136,7 +137,8 @@ always_ff@(posedge clk50m or negedge ready)begin
             end
             3:begin // send the data to the port it came from + 1
                 rx_head_rdy <= 1'b1;
-                tx_dst_port <= rx_head[15:0] + 16'd1;
+                tx_dst_port <= rx_head[15:0];
+                tx_src_port <= rx_head[15:0];
                 tx_state <= 4;
             end
             4:begin
