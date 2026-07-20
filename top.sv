@@ -137,7 +137,7 @@ always_ff@(posedge clk50m or negedge ready)begin
             end
             3:begin // send the data to the port it came from + 1
                 rx_head_rdy <= 1'b1;
-                tx_dst_port <= rx_head[15:0];
+                tx_dst_port <= rx_head[31:16];
                 tx_src_port <= rx_head[15:0];
                 tx_state <= 4;
             end
