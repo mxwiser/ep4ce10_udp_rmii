@@ -26,7 +26,7 @@
 //----------------------------------------------------------------------
 //
 
-`include "rmii.svh"
+
 
 module udp
 #(
@@ -42,7 +42,11 @@ module udp
     output logic clk50m,
     output logic ready,
 
-    rmii.fpga_side netrmii,
+    input rmii_clk50m, rmii_rx_crs,
+    output rmii_mdc, rmii_txen,
+    inout rmii_mdio,
+    output [1:0] rmii_txd,
+    input [1:0] rmii_rxd,
 
     output logic phyrst,
 
@@ -67,7 +71,7 @@ module udp
 logic rphyrst;
 
 
-assign netrmii.mdc = clk1m;
+assign rmii_mdc = clk1m;
 logic phy_rdy;
 logic SMI_trg;
 logic SMI_ack;
@@ -97,66 +101,48 @@ always_ff@(posedge clk1m or negedge rst)begin
             if(SMI_ack && SMI_ready)begin
                 case(SMI_status)
                     0:begin
-                        SMI_adr <= 5'd31;
-                        SMI_wdata <= 16'h7;
-                        SMI_rw <= 1'b0;
-
-                        SMI_status <= 1;
-                    end
-                    1:begin
-                        SMI_adr <= 5'd16;
-                        SMI_wdata <= 16'hFFE;
-
-                        SMI_status <= 2;
-                    end
-                    2:begin
-                        SMI_rw <= 1'b1;
-
-                        SMI_status <= 3;
-                    end
-                    3:begin
-                        SMI_adr <= 5'd31;
-                        SMI_wdata <= 16'h0;
-                        SMI_rw <= 1'b0;
-
-                        SMI_status <= 4;
-                    end
-                    4:begin
                         SMI_adr <= 5'd1;
                         SMI_rw <= 1'b1;
 
-                        SMI_status <= 5;
+                        SMI_status <= 1;
                     end
-                    5:begin
+
+                    1:begin
+                        //第一次读取丢弃
+                        SMI_status <= 2;
+                    end
+
+                    2:begin
+                        SMI_adr <= 5'd1;
+                        SMI_rw <= 1'b1;
+                        SMI_status <= 3;
+                    end
+
+                    3:begin
                         if(SMI_data[2])begin
                             phy_rdy <= 1'b1;
                             SMI_trg <= 1'b0;
                         end
                     end
+
                 endcase
             end
         end
     end
 end
 
-`ifndef VERILATOR
 SMI_ct ct(
     .clk(clk1m), .rst(rphyrst), .rw(SMI_rw), .trg(SMI_trg), .ready(SMI_ready), .ack(SMI_ack),
     .phy_adr(5'd1), .reg_adr(SMI_adr),
     .data(SMI_wdata),
     .smi_data(SMI_data),
-    .mdio(netrmii.mdio)
+    .mdio(rmii_mdio)
 );
-`else
-// Simulator build path: tie off SMI handshake and report link-up bit set.
-assign SMI_ack = 1'b1;
-assign SMI_ready = 1'b1;
-assign SMI_data = 16'h0004;
-`endif
+
 
 assign phyrst = rphyrst;
 
-assign clk50m = netrmii.clk50m;
+assign clk50m = rmii_clk50m;
 
 //rx fifo
 logic arp_rpy_fin;
@@ -168,9 +154,9 @@ logic[7:0] rx_data_s;
 
 
 logic crs;
-assign crs = netrmii.rx_crs;
+assign crs = rmii_rx_crs;
 logic[1:0] rxd;
-assign rxd = netrmii.rxd;
+assign rxd = rmii_rxd;
 
 byte rx_cnt;
 byte tick;
@@ -609,32 +595,42 @@ logic read_data;
 always_comb begin
     read_head = rx_head_rdy_i && rx_head_av_o;
     read_data = rx_data_rdy_i && rx_data_av_o;
+
+
 end
 
 always_ff@(posedge clk50m or negedge phy_rdy)begin
     if(phy_rdy==1'b0)begin
         rx_head_fifo_tail <= 0;
         rx_data_fifo_tail <= 0;
-        rx_head_av_o <= 1'b0;
-        rx_data_av_o <= 1'b0;
-    end else begin
-        rx_head_av_o <= rx_head_fifo_head != rx_head_fifo_tail;
-        if(read_head) rx_head_av_o <= rx_head_fifo_head != (rx_head_fifo_tail+1)%128;
-        if(read_head) rx_head_fifo_tail <= (rx_head_fifo_tail+1)%16'd128;
 
-        rx_data_av_o <= rx_data_fifo_head != rx_data_fifo_tail;
-        if(read_data) rx_data_av_o <= rx_data_fifo_head != (rx_data_fifo_tail+1)%8192;
-        if(read_data) rx_data_fifo_tail <= (rx_data_fifo_tail+1)%16'd8192;
+        rx_head_av_o<=1'b0;
+        rx_data_av_o<=1'b0;
+    end else begin
+
+
+        if(read_head) begin 
+            rx_head_av_o <= rx_head_fifo_head != (rx_head_fifo_tail+1)%128;
+            rx_head_fifo_tail <= (rx_head_fifo_tail+1)%16'd128;
+            rx_head_o <= rx_head_fifo[(rx_head_fifo_tail+1)%128];
+        end else begin
+            rx_head_av_o <= rx_head_fifo_head != rx_head_fifo_tail;
+            rx_head_o <= rx_head_fifo[rx_head_fifo_tail];
+        end
+
+        if(read_data) begin
+            rx_data_av_o <= rx_data_fifo_head != (rx_data_fifo_tail+1)%8192;
+            rx_data_fifo_tail <= (rx_data_fifo_tail+1)%16'd8192;
+            rx_data_o <= rx_data_fifo[(rx_data_fifo_tail+1)%8192];
+        end else begin
+            rx_data_av_o <= rx_data_fifo_head != rx_data_fifo_tail;
+            rx_data_o <= rx_data_fifo[rx_data_fifo_tail];
+        end
+
     end
 end
 
-// RAM 读单独放在一个 always 块里（不带异步复位，最符合推断模板）
-always_ff@(posedge clk50m) begin
-    rx_head_o <= rx_head_fifo[read_head ? (rx_head_fifo_tail+1)%128
-                                        :  rx_head_fifo_tail];
-    rx_data_o <= rx_data_fifo[read_data ? (rx_data_fifo_tail+1)%8192
-                                        :  rx_data_fifo_tail];
-end
+
 
 CRC_check crc(
     .clk(clk50m),
@@ -658,7 +654,7 @@ logic [7:0] test_data;
 byte arp_rpy_stauts;
 shortint arp_rpy_cnt;
 
-logic [7:0] arp_head [0:8] = '{
+logic [7:0] arp_head [8:0] = '{
     8'h08,
     8'h06,
     8'h00,
@@ -679,8 +675,8 @@ tx_ct ctct(
     .tx_en(test_tx_en),
     .tx_bz(tx_bz),
     .tx_av(tx_av),
-    .p_txd(netrmii.txd),
-    .p_txen(netrmii.txen)
+    .p_txd(rmii_txd),
+    .p_txen(rmii_txen)
 );
 
 logic [15:0] sendport = 16'h1234;
@@ -719,7 +715,7 @@ int tick_wt_cnt;
 
 int base_tick = 250000000;
 
-logic [7:0] data_rom [0:42] = '{
+logic [7:0] data_rom [42:0] = '{
     8'h63, 8'h35, 8'h79, 8'h33, 8'h34, 8'h62, 8'h36,
     8'h34, 8'h65, 8'h76, 8'h46, 8'h44, 8'h05, 8'hcc,
     8'h94, 8'h15, 8'h00, 8'h39, 8'h30, 8'h94, 8'ha3,
@@ -1434,14 +1430,14 @@ always_comb begin
     end
 end
 
-logic [7:0] udp_head_p1 [0:3] = '{
+logic [7:0] udp_head_p1 [3:0] = '{
     8'h08,
     8'h00,
     8'h45,
     8'h00
 };
 
-logic [7:0] udp_head_p2 [0:3] = '{
+logic [7:0] udp_head_p2 [3:0] = '{
     8'h40,
     8'h00,
     8'h40,

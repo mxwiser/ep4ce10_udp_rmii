@@ -1,11 +1,16 @@
-`include "rmii.svh"
+
 
 module top(
     input clk,
     input rst,
     output phyrst,
     output[5:0] led,
-    rmii.fpga_side netrmii
+
+    input rmii_clk50m, rmii_rx_crs,
+    output rmii_mdc, rmii_txen,
+    inout rmii_mdio,
+    output [1:0] rmii_txd,
+    input [1:0] rmii_rxd
 );
 
 
@@ -21,7 +26,9 @@ always_ff@(posedge clk or negedge rst)begin
     end else begin
         ckdiv <= ckdiv + 24'd1;
         if(ckdiv == 24'd0)
-            rled <= {rled[4:0],rled[5]};
+            rled[0] <= !rled[0];
+        rled[1] <= ready;
+        rled[2] <= rx_data_av;
     end
 end
 
@@ -62,7 +69,13 @@ udp #(
     .clk50m(clk50m),
     .ready(ready),
 
-    .netrmii(netrmii),
+    .rmii_clk50m(rmii_clk50m),
+    .rmii_rx_crs(rmii_rx_crs),
+    .rmii_mdc(rmii_mdc),
+    .rmii_txen(rmii_txen),
+    .rmii_mdio(rmii_mdio),
+    .rmii_txd(rmii_txd),
+    .rmii_rxd(rmii_rxd),
 
     .phyrst(phyrst),
 
@@ -123,7 +136,7 @@ always_ff@(posedge clk50m or negedge ready)begin
             end
             3:begin // send the data to the port it came from + 1
                 rx_head_rdy <= 1'b1;
-                tx_dst_port <= rx_head[31:16] + 16'd1;
+                tx_dst_port <= rx_head[15:0] + 16'd1;
                 tx_state <= 4;
             end
             4:begin
