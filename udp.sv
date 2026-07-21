@@ -404,7 +404,7 @@ always_ff@(posedge clk50m or negedge phy_rdy)begin
             20:begin
                 //如果fifo满了，就直接拒绝接收 / Reject reception when FIFO is full
                 //head 剩余空间小于4 或者 data 剩余空间小于1600 / head free space < 4 or data free space < 1600
-                if((rx_data_fifo_tail + 127 - rx_data_fifo_head_int) % 128 < 4)
+                if((rx_head_fifo_tail + 127 - rx_head_fifo_head_int) % 128 < 4)
                     ethernet_resolve_status <= 100;
                 if((rx_data_fifo_tail + 8191 - rx_data_fifo_head_int) % 8192 < 1600)
                     ethernet_resolve_status <= 100;
