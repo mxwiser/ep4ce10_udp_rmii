@@ -177,17 +177,19 @@ always @(posedge clk50m or negedge phy_rdy) begin
             tick <= tick + 8'd1;
             if(tick == 3)tick <= 0;
         end
-        rx_cnt <= 0;
+        
         fifo_drop <= 1'b0;
 
         case(rx_state)
             0:begin
                 rx_state <= 1;
+                rx_cnt <= 0;
             end
             1:begin //检测前导码和相位 / Detect preamble and alignment phase
                 if(rx_data_s[7:0] == 8'h55)begin
                     rx_state <= 2;
                 end
+                rx_cnt <= 0;
             end
             2:begin
                 tick <= 1;
