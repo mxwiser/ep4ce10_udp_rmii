@@ -13,16 +13,6 @@ modport fpga_side(
     output txd, txen, mdc,
     inout  mdio
 );
-/*
-    logic clk50m;
 
-    logic [1:0] txd;
-    logic txen;
-    logic [1:0] rxd;
-    logic rx_crs;
-
-    logic mdc;
-    logic mdio;
-*/
 endinterface //rmii
 `endif //RMII_INTERFACE

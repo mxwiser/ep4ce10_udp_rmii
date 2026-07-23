@@ -26,7 +26,7 @@
 //----------------------------------------------------------------------
 //
 
-
+`include "rmii.svh"
 
 module udp
 #(
@@ -42,11 +42,7 @@ module udp
     output logic clk50m,
     output logic ready,
 
-    input rmii_clk50m, rmii_rx_crs,
-    output rmii_mdc, rmii_txen,
-    inout rmii_mdio,
-    output [1:0] rmii_txd,
-    input [1:0] rmii_rxd,
+    rmii.fpga_side netrmii,
 
     output logic phyrst,
 
@@ -71,7 +67,7 @@ module udp
 logic rphyrst;
 
 
-assign rmii_mdc = clk1m;
+assign netrmii.mdc = clk1m;
 logic phy_rdy;
 logic SMI_trg;
 logic SMI_ack;
@@ -124,25 +120,30 @@ always_ff@(posedge clk1m or negedge rst)begin
                             SMI_trg <= 1'b0;
                         end
                     end
-
                 endcase
             end
         end
     end
 end
 
+`ifndef VERILATOR
 SMI_ct ct(
     .clk(clk1m), .rst(rphyrst), .rw(SMI_rw), .trg(SMI_trg), .ready(SMI_ready), .ack(SMI_ack),
     .phy_adr(5'd1), .reg_adr(SMI_adr),
     .data(SMI_wdata),
     .smi_data(SMI_data),
-    .mdio(rmii_mdio)
+    .mdio(netrmii.mdio)
 );
-
+`else
+// Simulator build path: tie off SMI handshake and report link-up bit set.
+assign SMI_ack = 1'b1;
+assign SMI_ready = 1'b1;
+assign SMI_data = 16'h0004;
+`endif
 
 assign phyrst = rphyrst;
 
-assign clk50m = rmii_clk50m;
+assign clk50m = netrmii.clk50m;
 
 //rx fifo
 logic arp_rpy_fin;
@@ -154,9 +155,9 @@ logic[7:0] rx_data_s;
 
 
 logic crs;
-assign crs = rmii_rx_crs;
+assign crs = netrmii.rx_crs;
 logic[1:0] rxd;
-assign rxd = rmii_rxd;
+assign rxd = netrmii.rxd;
 
 byte rx_cnt;
 byte tick;
@@ -164,8 +165,8 @@ byte tick;
 logic fifo_in;
 logic[7:0] fifo_d;
 always_comb begin
-    fifo_in = tick == 0 && rx_state == 3;
-    fifo_d = rx_data_s;
+    fifo_in <= tick == 0 && rx_state == 3;
+    fifo_d <= rx_data_s;
 end
 logic fifo_drop;
 
@@ -177,19 +178,17 @@ always @(posedge clk50m or negedge phy_rdy) begin
             tick <= tick + 8'd1;
             if(tick == 3)tick <= 0;
         end
-        
+        rx_cnt <= 0;
         fifo_drop <= 1'b0;
 
         case(rx_state)
             0:begin
                 rx_state <= 1;
-                rx_cnt <= 0;
             end
             1:begin //检测前导码和相位 / Detect preamble and alignment phase
                 if(rx_data_s[7:0] == 8'h55)begin
                     rx_state <= 2;
                 end
-                rx_cnt <= 0;
             end
             2:begin
                 tick <= 1;
@@ -406,7 +405,7 @@ always_ff@(posedge clk50m or negedge phy_rdy)begin
             20:begin
                 //如果fifo满了，就直接拒绝接收 / Reject reception when FIFO is full
                 //head 剩余空间小于4 或者 data 剩余空间小于1600 / head free space < 4 or data free space < 1600
-                if((rx_head_fifo_tail + 127 - rx_head_fifo_head_int) % 128 < 4)
+                if((rx_data_fifo_tail + 127 - rx_data_fifo_head_int) % 128 < 4)
                     ethernet_resolve_status <= 100;
                 if((rx_data_fifo_tail + 8191 - rx_data_fifo_head_int) % 8192 < 1600)
                     ethernet_resolve_status <= 100;
@@ -595,11 +594,10 @@ logic read_head;
 logic read_data;
 
 always_comb begin
-    read_head = rx_head_rdy_i && rx_head_av_o;
-    read_data = rx_data_rdy_i && rx_data_av_o;
-
-
+    read_head <= rx_head_rdy_i && rx_head_av_o;
+    read_data <= rx_data_rdy_i && rx_data_av_o;
 end
+
 
 always_ff@(posedge clk50m or negedge phy_rdy)begin
     if(phy_rdy==1'b0)begin
@@ -611,7 +609,7 @@ always_ff@(posedge clk50m or negedge phy_rdy)begin
     end else begin
 
 
-        if(read_head) begin 
+        if(read_head)begin
             rx_head_av_o <= rx_head_fifo_head != (rx_head_fifo_tail+1)%128;
             rx_head_fifo_tail <= (rx_head_fifo_tail+1)%16'd128;
             rx_head_o <= rx_head_fifo[(rx_head_fifo_tail+1)%128];
@@ -621,7 +619,7 @@ always_ff@(posedge clk50m or negedge phy_rdy)begin
         end
 
         if(read_data) begin
-            rx_data_av_o <= rx_data_fifo_head != (rx_data_fifo_tail+1)%8192;
+            rx_data_av_o <= rx_data_fifo_head != (rx_data_fifo_tail+1)%8192;    
             rx_data_fifo_tail <= (rx_data_fifo_tail+1)%16'd8192;
             rx_data_o <= rx_data_fifo[(rx_data_fifo_tail+1)%8192];
         end else begin
@@ -631,6 +629,7 @@ always_ff@(posedge clk50m or negedge phy_rdy)begin
 
     end
 end
+
 
 
 
@@ -656,17 +655,10 @@ logic [7:0] test_data;
 byte arp_rpy_stauts;
 shortint arp_rpy_cnt;
 
-logic [7:0] arp_head [8:0] = '{
-    8'h08,
-    8'h06,
-    8'h00,
-    8'h01,
-    8'h08,
-    8'h00,
-    8'h06,
-    8'h04,
-    8'h00
-};
+logic [7:0] arp_head [8:0] = '{8'h08,8'h06,8'h00,8'h01,8'h08,8'h00,8'h06,8'h04,8'h00};
+
+
+
 
 logic tx_bz;
 logic tx_av;
@@ -677,8 +669,8 @@ tx_ct ctct(
     .tx_en(test_tx_en),
     .tx_bz(tx_bz),
     .tx_av(tx_av),
-    .p_txd(rmii_txd),
-    .p_txen(rmii_txen)
+    .p_txd(netrmii.txd),
+    .p_txen(netrmii.txen)
 );
 
 logic [15:0] sendport = 16'h1234;
@@ -717,15 +709,8 @@ int tick_wt_cnt;
 
 int base_tick = 250000000;
 
-logic [7:0] data_rom [42:0] = '{
-    8'h63, 8'h35, 8'h79, 8'h33, 8'h34, 8'h62, 8'h36,
-    8'h34, 8'h65, 8'h76, 8'h46, 8'h44, 8'h05, 8'hcc,
-    8'h94, 8'h15, 8'h00, 8'h39, 8'h30, 8'h94, 8'ha3,
-    8'h0f, 8'h0f, 8'ha8, 8'hc0, 8'h10, 8'h0f, 8'ha8,
-    8'hc0, 8'h61, 8'h63, 8'h11, 8'h40, 8'h00, 8'h40,
-    8'hf3, 8'h37, 8'h29, 8'h00, 8'h00, 8'h45, 8'h00,
-    8'h08
-};
+logic [7:0] data_rom [42:0] = '{8'h63, 8'h35, 8'h79, 8'h33, 8'h34, 8'h62, 8'h36, 8'h34, 8'h65, 8'h76, 8'h46, 8'h44, 8'h05, 8'hcc, 8'h94, 8'h15, 8'h00, 8'h39, 8'h30, 8'h94, 8'ha3, 8'h0f, 8'h0f, 8'ha8, 8'hc0, 8'h10, 8'h0f, 8'ha8, 8'hc0, 8'h61, 8'h63, 8'h11, 8'h40, 8'h00, 8'h40, 8'hf3, 8'h37, 8'h29, 8'h00, 8'h00, 8'h45, 8'h00, 8'h08};
+
 logic arp_lst_refresh;
 int arp_refresh_cnt;
 logic [31:0] arp_target_ip;
@@ -931,8 +916,8 @@ udp_generator #(.ip_adr(ip_adr)) udp_gen (
 );
 
 always_comb begin
-    tx_req_rdy_o = ~ob_busy;
-    tx_data_rdy_o = ~ob_full;
+    tx_req_rdy_o <= ~ob_busy;
+    tx_data_rdy_o <= ~ob_full;
 end
 
 
@@ -989,7 +974,7 @@ module SMI_ct(
     assign mdio = rmdio?1'bZ:1'b0;
 
     always_comb begin
-        smi_data = rx_data;
+        smi_data <= rx_data;
     end
 
     always_ff@(posedge clk or negedge rst)begin
@@ -1432,19 +1417,8 @@ always_comb begin
     end
 end
 
-logic [7:0] udp_head_p1 [3:0] = '{
-    8'h08,
-    8'h00,
-    8'h45,
-    8'h00
-};
-
-logic [7:0] udp_head_p2 [3:0] = '{
-    8'h40,
-    8'h00,
-    8'h40,
-    8'h11
-};
+logic [7:0] udp_head_p1 [3:0] = '{8'h08, 8'h00, 8'h45, 8'h00};
+logic [7:0] udp_head_p2 [3:0] = '{8'h40, 8'h00, 8'h40, 8'h11};
 
 always@(posedge clk or negedge rst)begin
     if(rst == 0)begin
