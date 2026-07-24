@@ -154,8 +154,8 @@ byte cnt;
 logic[7:0] rx_data_s;
 
 
-logic crs;
-assign crs = netrmii.rx_crs;
+logic crs_dv;
+assign crs_dv = netrmii.crs_dv;
 logic[1:0] rxd;
 assign rxd = netrmii.rxd;
 
@@ -170,11 +170,13 @@ always_comb begin
 end
 logic fifo_drop;
 
+
+
 always @(posedge clk50m or negedge phy_rdy) begin
     if(phy_rdy==1'b0)begin
         cnt <=0;
     end else begin
-        if(crs)begin
+        if(crs_dv)begin
             tick <= tick + 8'd1;
             if(tick == 3)tick <= 0;
         end
@@ -204,16 +206,17 @@ always @(posedge clk50m or negedge phy_rdy) begin
                 end
             end
             3:begin
-                if(crs == 1'b0)
+                if(crs_dv == 1'b0) begin
                     fifo_drop <= 1'b1;
+                end
             end
         endcase
 
-        if(crs == 1'b0)begin
+        if(crs_dv == 1'b0)begin
             rx_state<=0;
             rx_data_s <= 8'b00XXXXXX;
         end
-        if(crs)begin
+        if(crs_dv)begin
             rx_data_s <= {rxd,rx_data_s[7:2]};
         end
     end
